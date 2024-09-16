@@ -1,0 +1,240 @@
+---
+title: "sex_differences_ipf"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+date: "2024-03-01"
+---
+
+# The Loadout and Stay
+```{r}
+
+library(data.table)
+library(tidyverse)
+library(tableone)
+library(sjPlot)
+library(lubridate)
+library(nlme)
+library(lme4)
+library(lmerTest)
+library(survival)
+library(survminer)
+
+## RNASeq packages
+library(edgeR)
+library(limma)
+#library(sva)
+library(gplots)
+library(sjPlot)
+library(BiocManager)
+library(fgsea)
+library("RColorBrewer")
+library(VennDiagram)
+library(ggsignif)
+library(GSVA)
+#library(EnsDb.Hsapiens.v79)
+
+```
+
+# Read in UCD data
+```{r}
+
+ucd <- read.csv("UCD_RNAseq_Menon.csv")
+
+# Separate data into pheno and counts files
+## pheno
+
+ucd.pheno <- ucd %>% filter(!Dx=="Cont") %>% dplyr::select(PID, Pax.Date, Dx, Dx2, Dx3, age, Sex, Race, O2_base, Tob, PY, CT_Pattern, CPFE, SLB.Date, Path_prim, Path_sec, PFT_Pax, FVC, FVCpct, DLCO, DLCOpct, VS, VS_Date)
+
+## counts
+ucd.counts <- ucd[-c(2:23)]
+ucd.counts <- ucd.counts %>% column_to_rownames(var = "PID")
+ucd.counts <- t(ucd.counts)
+
+```
+
+# IPF sex DE
+```{r}
+
+# Limit to only ipf
+## pheno
+ucd.pheno.ipf <- ucd.pheno %>% dplyr::filter(Dx=="IPF") %>% dplyr::select(PID, age, Sex, Race, Tob, PY) %>% mutate(Race = ifelse(Race=="white",1,2),Tob = ifelse(Tob=="current",1,0)) %>% mutate(Sex = as.factor(Sex),
+                                                                   Race = as.factor(Race),
+                                                                   Tob = as.factor(Tob))
+
+## counts
+ucd.counts.ipf <- ucd %>% dplyr::filter(Dx=="IPF")
+ucd.counts.ipf <- ucd.counts.ipf[-c(2:23)]
+ucd.counts.ipf <- ucd.counts.ipf %>% column_to_rownames(var = "PID")
+ucd.counts.ipf <- t(ucd.counts.ipf)
+
+## remove genes with low expression in >50% of subjects
+ucd.counts.ipf <- DGEList(ucd.counts.ipf)
+cpms = cpm(ucd.counts.ipf)
+keep.ipf = rowSums(cpms >1) >=67
+ucd.counts.ipf = ucd.counts.ipf[keep.ipf,]
+
+## make sure dimensions are equal
+dim(ucd.pheno.ipf)
+dim(ucd.counts.ipf)
+
+## Normalize gene expression distributions
+ucd.counts.ipf <- calcNormFactors(ucd.counts.ipf)
+
+## Create design matrices
+design.ipf <- model.matrix(~Sex + age + Race + Tob + PY, data=ucd.pheno.ipf)
+nullmod <- model.matrix(~age + Race  + Tob + PY, data=ucd.pheno.ipf)
+
+## remove heteroscedascity / calculate precision weights via voom
+v.ipf <- voom(ucd.counts.ipf,design.ipf,plot=TRUE)
+
+### linear modelling 
+fit.ipf <- lmFit(v.ipf, design.ipf)
+fit.ipf <- eBayes(fit.ipf)
+
+## Examine results
+results.ipf <- topTable(fit.ipf, coef=2, number=Inf)
+results0.1FDR.ipf <- subset(results.ipf, results.ipf$adj.P.Val < 0.1,)
+write.csv(results0.1FDR.ipf,"sex_differences_ipf_FDR10de_03.18.24.csv")
+
+```
+
+# CTD-ILD sex DE
+```{r}
+
+# Limit to only ctd-ild
+## pheno
+ucd.pheno.ctd <- ucd.pheno %>% dplyr::filter(Dx=="CTD") %>% dplyr::select(PID, age, Sex, Race, Tob, PY) %>% mutate(Race = ifelse(Race=="white",1,2),Tob = ifelse(Tob=="current",1,0)) %>% mutate(Sex = as.factor(Sex),
+                                                                   Race = as.factor(Race),
+                                                                   Tob = as.factor(Tob))
+
+## counts
+ucd.counts.ctd <- ucd %>% dplyr::filter(Dx=="CTD")
+ucd.counts.ctd <- ucd.counts.ctd[-c(2:23)]
+ucd.counts.ctd <- ucd.counts.ctd %>% column_to_rownames(var = "PID")
+ucd.counts.ctd <- t(ucd.counts.ctd)
+
+## remove genes with low expression in >50% of subjects
+ucd.counts.ctd <- DGEList(ucd.counts.ctd)
+cpms = cpm(ucd.counts.ctd)
+keep.ctd = rowSums(cpms >1) >=29
+ucd.counts.ctd = ucd.counts.ctd[keep.ctd,]
+
+## make sure dimensions are equal
+dim(ucd.pheno.ctd)
+dim(ucd.counts.ctd)
+
+## Normalize gene expression distributions
+ucd.counts.ctd <- calcNormFactors(ucd.counts.ctd)
+
+## Create design matrices
+design.ctd <- model.matrix(~Sex + age + Race + Tob + PY, data=ucd.pheno.ctd)
+
+## remove heteroscedascity / calculate precision weights via voom
+v.ctd <- voom(ucd.counts.ctd,design.ctd,plot=TRUE)
+
+### linear modelling 
+fit.ctd <- lmFit(v.ctd, design.ctd)
+fit.ctd <- eBayes(fit.ctd)
+
+## Examine results
+results.ctd <- topTable(fit.ctd, coef=2, number=Inf)
+results0.1FDR.ctd <- subset(results.ctd, results.ctd$adj.P.Val < 0.1,)
+write.csv(results0.1FDR.ctd,"sex_differences_ctd_FDR10de_03.18.24.csv")
+
+```
+
+# Table 1
+```{r}
+
+ucd.pheno.table1 <- ucd.pheno %>% filter(Dx %in% c("IPF","CTD"))
+ucd.pheno.table1 <- ucd.pheno.table1 %>% mutate(DLCOpct = ifelse(DLCOpct=="UTP",NA,DLCOpct)) %>% mutate(DLCOpct = as.numeric(DLCOpct))
+ucdtableOneVars <- c("age","Sex","Race","O2_base","Tob",'PY',"FVCpct","DLCOpct")
+ucdtableOneCatVars <- c("Sex","Race","O2_base","Tob")
+ucdtableOne <- CreateTableOne(vars = ucdtableOneVars, strata = "Dx", data = ucd.pheno.table1, factorVars = ucdtableOneCatVars)
+ucdtableOne_out <- print(ucdtableOne,quote = FALSE, noSpaces = TRUE, printToggle = FALSE, varLabel = TRUE)
+write.csv(ucdtableOne_out, file = paste0("ucd_tableone.csv"))
+ucdtable1 <- read.csv("ucd_tableone.csv")
+tab_df(ucdtable1,file="ucdtableOne_05.14.24.doc")
+
+
+```
+
+# Power calculation
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("RNASeqPower")
+library(RNASeqPower)
+
+rnapower(depth = 50, cv = 0.4, effect = 1.5, alpha = 0.0000025, power = 0.8)
+
+library(pwr)
+pwr.t.test(d=0.75,sig.level=0.00017,power = 0.8,type="two.sample",alternative="two.sided")
+
+```
+
+# Read in gtex
+```{r}
+
+gtex <- read.delim(file="gene_reads_2017-06-05_v8_whole_blood.gct", skip = 2)
+gtex.pheno <- read.delim(paste0("GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt"))
+
+gtex.prep <- gtex %>% select(-c(id,Description))
+gtex.prep <- gtex.prep %>% column_to_rownames(var = "Name")
+t_gtex <- t(gtex.prep)
+t_gtex.df <- as.data.frame(t_gtex)
+t_gtex.df <- t_gtex.df %>% rownames_to_column(var = "SUBJID")
+t_gtex.df <- t_gtex.df %>% separate(SUBJID, c("SUBJID", "extra"), ".000")
+t_gtex.df <- t_gtex.df %>% select(-extra) %>% column_to_rownames(var = "SUBJID")
+
+gtex.clean <- t(t_gtex.df)
+gtex.clean <- as.data.frame(gtex.clean)
+
+```
+
+# gtex sex differences DE
+```{r}
+
+## pheno
+gtex.pheno.de <- gtex.pheno %>% dplyr::select(SUBJID,SEX,AGE) %>% mutate(SEX=as.factor(SEX),
+                                                                         AGE=as.factor(AGE))
+
+## keep only pheno from counts
+gtex.counts.id <- rownames(t_gtex.df)
+gtex.pheno.de$SUBJID <- gsub("-", ".", gtex.pheno.de$SUBJID)
+gtex.pheno.de <- gtex.pheno.de %>% dplyr::filter(SUBJID %in% gtex.counts.id)
+
+## remove genes with low expression in >50% of subjects
+gtex.counts <- DGEList(gtex.clean)
+cpms = cpm(gtex.counts)
+keep.gtex = rowSums(cpms >1) >=490
+gtex.counts = gtex.counts[keep.gtex,]
+
+## make sure dimensions are equal
+dim(gtex.pheno.de)
+dim(gtex.counts)
+
+## Normalize gene expression distributions
+gtex.counts <- calcNormFactors(gtex.counts)
+
+## Create design matrices
+design.gtex <- model.matrix(~SEX + AGE, data=gtex.pheno.de)
+
+## remove heteroscedascity / calculate precision weights via voom
+v.gtex <- voom(gtex.counts,design.gtex,plot=TRUE)
+
+### linear modelling 
+fit.gtex <- lmFit(v.gtex, design.gtex)
+fit.gtex <- eBayes(fit.gtex)
+
+## Examine results
+results.gtex <- topTable(fit.gtex, coef=2, number=Inf)
+results0.1FDR.gtex <- subset(results.gtex, results.gtex$adj.P.Val < 0.1,)
+write.csv(results0.1FDR.gtex,"sex_differences_gtex_FDR10de_09.13.24.csv")
+
+
+
+```
