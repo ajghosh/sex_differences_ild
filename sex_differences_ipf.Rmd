@@ -98,6 +98,19 @@ results.ipf <- topTable(fit.ipf, coef=2, number=Inf)
 results0.1FDR.ipf <- subset(results.ipf, results.ipf$adj.P.Val < 0.1,)
 write.csv(results0.1FDR.ipf,"sex_differences_ipf_FDR10de_03.18.24.csv")
 
+ipf.volc <- results.ipf %>% mutate(log.padj = -log(adj.P.Val,base = 10))
+
+ipf.volc %>%
+  ggplot(aes(logFC,log.padj)) +
+  geom_point((aes(color = cut(log.padj, c(-2.5, 1.29, Inf))))) +
+    scale_x_continuous(limits = c(-2.5,2.5)) +
+  scale_y_continuous(limits = c(0,15)) +
+  theme_bw() +
+   theme(legend.position = "none") +
+  ylab("-log10 p value") +
+  xlab("IPF log2 fold change")
+ggsave("ipf_volcplot.jpeg",dpi=300, height = 7, width = 8)
+
 ```
 
 # CTD-ILD sex DE
@@ -142,6 +155,18 @@ fit.ctd <- eBayes(fit.ctd)
 results.ctd <- topTable(fit.ctd, coef=2, number=Inf)
 results0.1FDR.ctd <- subset(results.ctd, results.ctd$adj.P.Val < 0.1,)
 write.csv(results0.1FDR.ctd,"sex_differences_ctd_FDR10de_03.18.24.csv")
+
+ctd.volc <- results.ctd %>% mutate(log.padj = -log(adj.P.Val,base = 10))
+
+ctd.volc %>%
+  ggplot(aes(logFC,log.padj)) +
+  geom_point((aes(color = cut(log.padj, c(-2.5, 1.29, Inf))))) +
+    scale_x_continuous(limits = c(-2.5,2.5)) +
+  theme_bw() +
+   theme(legend.position = "none") +
+  ylab("-log10 p value") +
+  xlab("CTD-ILD log2 fold change")
+ggsave("ctd_volcplot.jpeg",dpi=300, height = 7, width = 8)
 
 ```
 
@@ -205,12 +230,16 @@ gtex.pheno.de <- gtex.pheno %>% dplyr::select(SUBJID,SEX,AGE) %>% mutate(SEX=as.
 ## keep only pheno from counts
 gtex.counts.id <- rownames(t_gtex.df)
 gtex.pheno.de$SUBJID <- gsub("-", ".", gtex.pheno.de$SUBJID)
-gtex.pheno.de <- gtex.pheno.de %>% dplyr::filter(SUBJID %in% gtex.counts.id)
+gtex.pheno.de <- gtex.pheno.de %>% dplyr::filter(SUBJID %in% gtex.counts.id) %>% dplyr::filter(AGE=="60-69")
+
+## keep only counts from pheno
+ids.use <- gtex.pheno.de$SUBJID
+gtex.clean.de <- gtex.clean[, ids.use]
 
 ## remove genes with low expression in >50% of subjects
-gtex.counts <- DGEList(gtex.clean)
+gtex.counts <- DGEList(gtex.clean.de)
 cpms = cpm(gtex.counts)
-keep.gtex = rowSums(cpms >1) >=490
+keep.gtex = rowSums(cpms >1) >=125
 gtex.counts = gtex.counts[keep.gtex,]
 
 ## make sure dimensions are equal
@@ -221,7 +250,7 @@ dim(gtex.counts)
 gtex.counts <- calcNormFactors(gtex.counts)
 
 ## Create design matrices
-design.gtex <- model.matrix(~SEX + AGE, data=gtex.pheno.de)
+design.gtex <- model.matrix(~SEX, data=gtex.pheno.de)
 
 ## remove heteroscedascity / calculate precision weights via voom
 v.gtex <- voom(gtex.counts,design.gtex,plot=TRUE)
@@ -232,9 +261,79 @@ fit.gtex <- eBayes(fit.gtex)
 
 ## Examine results
 results.gtex <- topTable(fit.gtex, coef=2, number=Inf)
-results0.1FDR.gtex <- subset(results.gtex, results.gtex$adj.P.Val < 0.1,)
-write.csv(results0.1FDR.gtex,"sex_differences_gtex_FDR10de_09.13.24.csv")
+results0.05FDR.gtex <- subset(results.gtex, results.gtex$adj.P.Val < 0.05,)
+write.csv(results0.05FDR.gtex,"sex_differences_gtex_FDR10de_09.13.24.csv")
 
+## add back hgnc
+gtex.hgnc <- gtex %>% dplyr::select(Name,Description) %>% dplyr::rename("ensembl"=Name,"hgnc"=Description)
+results0.05FDR.gtex.hgnc <- results0.05FDR.gtex %>% rownames_to_column(var="ensembl") %>% left_join(.,gtex.hgnc,by="ensembl")
 
+## volcano plot
+gtex.volc <- results.gtex %>% mutate(log.padj = -log(adj.P.Val,base = 10))
+
+gtex.volc %>%
+  ggplot(aes(logFC,log.padj)) +
+  geom_point((aes(color = cut(log.padj, c(-2.5, 2, Inf))))) +
+  scale_x_continuous(limits = c(-2.5,2.5)) +
+  scale_y_continuous(limits = c(0,20)) +
+  theme_bw() +
+  ylab("-log10 p value") +
+  xlab("Control log2 fold change")
+ggsave("gtex_volcplot.jpeg",dpi=300, height = 7, width = 8)
+
+```
+
+# Venn diagram
+```{r}
+library(VennDiagram)
+
+## Venn diagram
+res.ctd <- results0.1FDR.ctd %>% rownames_to_column(var = "hgnc") %>% dplyr::select(hgnc)
+res.ctd.df <- data.frame(res.ctd, "ctd","1")
+colnames(res.ctd.df) <- c("gene","phenotype","status")
+
+res.ipf <- results0.1FDR.ipf %>% rownames_to_column(var = "hgnc") %>% dplyr::select(hgnc)
+res.ipf.df <- data.frame(res.ipf, "ipf","1")
+colnames(res.ipf.df) <- c("gene","phenotype","status")
+
+res.gtex <- results0.05FDR.gtex.hgnc %>% dplyr::select(hgnc)
+res.gtex.df <- data.frame(res.gtex, "gtex","1")
+colnames(res.gtex.df) <- c("gene","phenotype","status")
+
+res.all<-rbind(res.ctd.df, res.ipf.df, res.gtex.df)
+
+all.genes<-unique(res.all$gene)
+all.genes<-data.frame(all.genes)
+all.genes$ctd<- all.genes$all.genes %in% res.ctd$hgnc
+all.genes$ctd<-ifelse(all.genes$ctd==TRUE,1,ifelse(all.genes$ctd==FALSE,0,NA))
+all.genes$ctd<-as.factor(all.genes$ctd)
+all.genes$ipf<-all.genes$all.genes %in%  res.ipf$hgnc
+all.genes$ipf<-ifelse(all.genes$ipf==TRUE,1,ifelse(all.genes$ipf==FALSE,0,NA))
+all.genes$ipf<-as.factor(all.genes$ipf)
+all.genes$gtex<-all.genes$all.genes %in%  res.gtex$hgnc
+all.genes$gtex<-ifelse(all.genes$gtex==TRUE,1,ifelse(all.genes$gtex==FALSE,0,NA))
+all.genes$gtex<-as.factor(all.genes$gtex)
+
+sex.diff_VennPlot <- draw.triple.venn(
+  area1 = nrow(subset(all.genes, ctd == 1)),
+  area2 = nrow(subset(all.genes, ipf == 1)),
+  area3 = nrow(subset(all.genes, gtex == 1)),
+  n12 = nrow(subset(all.genes, ctd == 1 & ipf == 1)),
+  n13 = nrow(subset(all.genes, ctd == 1 & gtex == 1)),
+  n23 = nrow(subset(all.genes, ipf == 1 & gtex == 1)),
+  n123 = nrow(subset(all.genes, ctd == 1 & ipf == 1 & gtex == 1)),
+  category = c("CTD", "IPF", "GTEx"),
+  fill = c("red", "green", "blue"),
+  cex = 2,
+  cat.cex = 2,
+  cat.col = c("red", "green", "blue")
+  );
+
+png(filename = "sex.diff_Venn_diagram.png");
+grid.draw(sex.diff_VennPlot);
+dev.off()
+
+## overlap gene list
+write.csv(all.genes,"ipf-ctd-gtex_DE-overlap.csv")
 
 ```
